@@ -1,0 +1,23 @@
+# 构建产物
+target/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# 运行时产物
+logs/
+*.hprof
+*.log
+hs_err_pid*
+
+# 系统
+.DS_Store
+Thumbs.db
