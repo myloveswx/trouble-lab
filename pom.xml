@@ -19,12 +19,19 @@
 
     <properties>
         <java.version>21</java.version>
+        <springdoc.version>2.6.0</springdoc.version>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- Swagger / OpenAPI 文档：http://localhost:8091/swagger-ui/index.html -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
     </dependencies>
 

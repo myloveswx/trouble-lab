@@ -19,6 +19,7 @@ D:\workspace\.toolchain\jdk-21.0.12.1+1\bin\java.exe -Xms256m -Xmx512m -XX:MaxMe
 ```
 
 - 状态面板：`GET http://localhost:8091/issue/status`（堆使用/线程数/运行中的故障任务）
+- **Swagger 文档**：`http://localhost:8091/swagger-ui/index.html`（所有故障场景可视化触发，点一下就打故障 🎯）
 - 触发故障：`GET http://localhost:8091/issue/<场景名>`
 - 停止可控故障：`GET http://localhost:8091/issue/reset`（OOM/死锁无法恢复，需重启进程）
 

@@ -1,5 +1,7 @@
 package com.lab.web;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.cglib.proxy.Enhancer;
 import org.springframework.cglib.proxy.MethodInterceptor;
 import org.springframework.http.ResponseEntity;
@@ -20,6 +22,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 故障触发入口。
  * 每个场景对应一个 HTTP 端点，可反复演练；非致命场景可通过 /issue/reset 停止。
  */
+@Tag(name = "故障演练", description = "线上故障场景触发端点 — 配合 README 排查手册练习 jstack/jmap/jstat 取证")
 @RestController
 @RequestMapping("/issue")
 public class IssueController {
@@ -43,6 +46,7 @@ public class IssueController {
 
     // ==================== 场景清单 ====================
 
+    @Operation(summary = "状态面板：堆使用/线程数/运行中的故障任务")
     @GetMapping("/status")
     public Map<String, Object> status() {
         Runtime rt = Runtime.getRuntime();
@@ -58,6 +62,7 @@ public class IssueController {
      * 场景 1：单线程死循环，吃满一个核。
      * 排查点：top 看到某线程 100% CPU -> jstack 找到对应 RUNNABLE 线程栈。
      */
+    @Operation(summary = "场景1：单线程死循环吃满一个核", description = "排查：top/任务管理器找线程TID → 转十六进制 → jstack 定位到本方法")
     @GetMapping("/cpu-loop")
     public ResponseEntity<String> cpuLoop() {
         return startTask("cpu-loop", stopFlag -> {
@@ -74,6 +79,7 @@ public class IssueController {
      * 场景 2：多线程死循环，CPU 飙满（按核数 * 2 开线程）。
      * 排查点：整个进程 CPU 接近 100%，jstack 导出后统计 RUNNABLE 线程。
      */
+    @Operation(summary = "场景2：多线程CPU飙满", description = "默认开 核数*2 个满载线程；排查：jstack 统计 RUNNABLE 的 fault-cpu-multi-* 线程")
     @GetMapping("/cpu-multi")
     public ResponseEntity<String> cpuMulti(@RequestParam(defaultValue = "0") int threads) {
         int n = threads > 0 ? threads : Runtime.getRuntime().availableProcessors() * 2;
@@ -96,6 +102,7 @@ public class IssueController {
      * 一次请求内疯狂往 List 塞大对象，直接把堆撑爆。
      * OOM 只杀死当前请求线程，进程仍存活，可继续触发。
      */
+    @Operation(summary = "场景3：堆内存溢出", description = "疯狂塞10MB大对象直到 OutOfMemoryError: Java heap space；OOM只杀请求线程，进程存活可反复触发")
     @GetMapping("/oom-heap")
     public ResponseEntity<String> oomHeap() {
         try {
@@ -116,6 +123,7 @@ public class IssueController {
      * 每秒往静态 Map 塞 1MB 数据且从不清理，几分钟后必然 OOM。
      * 排查点：jmap -histo:live 反复对比，byte[] 实例数持续上涨。
      */
+    @Operation(summary = "场景4：缓慢内存泄漏", description = "每秒往静态Map塞1MB只进不出；排查：jmap -histo:live 间隔对比 byte[] 涨势")
     @GetMapping("/leak")
     public ResponseEntity<String> leak() {
         return startTask("leak", stopFlag -> {
@@ -131,6 +139,7 @@ public class IssueController {
      * 用 CGLIB 不带缓存的疯狂动态生成类。建议 JVM 加 -XX:MaxMetaspaceSize=128m 后演练。
      * 排查点：jstat -gcmetacapacity 或 jcmd GC.class_stats 看类数量暴涨。
      */
+    @Operation(summary = "场景5：元空间溢出", description = "CGLIB不带缓存疯狂生成类；建议启动加 -XX:MaxMetaspaceSize=128m；排查：jstat 看 MC 持续上涨")
     @GetMapping("/metaspace")
     public ResponseEntity<String> metaspace() {
         return startTask("metaspace", stopFlag -> {
@@ -156,6 +165,7 @@ public class IssueController {
      * 线程 A 先锁 LOCK_A 再要 LOCK_B；线程 B 相反 -> 互相等待。
      * 排查点：jstack 直接输出 "Found one Java-level deadlock"。
      */
+    @Operation(summary = "场景6：线程死锁", description = "两线程交叉持锁互相等待；jstack 直接输出 Found one Java-level deadlock；无法reset，需重启")
     @GetMapping("/deadlock")
     public ResponseEntity<String> deadlock() {
         Thread t1 = new Thread(() -> {
@@ -183,6 +193,7 @@ public class IssueController {
      * 启动 N 个永久睡眠的线程（默认 3000），耗尽线程资源。
      * 排查点：jstack 文件巨大、线程名高度重复；ps/任务管理器看线程数飙升。
      */
+    @Operation(summary = "场景7：线程数暴涨", description = "默认创建3000个睡眠线程；排查：jstack 统计线程名分布，警惕生产中的无界线程池")
     @GetMapping("/thread-flood")
     public ResponseEntity<String> threadFlood(@RequestParam(defaultValue = "3000") int count) {
         return startTask("thread-flood", stopFlag -> {
@@ -207,6 +218,7 @@ public class IssueController {
      * 堆看着正常但 RSS 持续上涨，直到 OOM killer / Native OOM。
      * 排查点：NMT（-XX:NativeMemoryTracking=summary）、pmap 对比。
      */
+    @Operation(summary = "场景8：堆外内存持续增长", description = "每秒分配1MB DirectByteBuffer；堆正常但RSS上涨；排查：NMT (jcmd VM.native_memory)")
     @GetMapping("/offheap")
     public ResponseEntity<String> offheap() {
         return startTask("offheap", stopFlag -> {
@@ -228,6 +240,7 @@ public class IssueController {
      * 后续所有接口无响应 -> 表现为"整个服务假死"。
      * 排查点：jstack 中大量 http-nio-*-exec 线程 PARKED 在 sleep/park。
      */
+    @Operation(summary = "场景9：慢接口拖垮线程池", description = "睡眠60秒占住Tomcat工作线程，连发后整个服务假死；排查：jstack 看大量 http-nio-exec 线程 PARKED")
     @GetMapping("/slow")
     public ResponseEntity<String> slow(@RequestParam(defaultValue = "60") int seconds) {
         try {
@@ -243,6 +256,7 @@ public class IssueController {
      * 高速分配 1MB 大对象且不保留 -> 内存使用率锯齿、GC 日志刷屏、CPU 被 GC 吃掉一部分。
      * 排查点：jstat -gcutil <pid> 1000 观察 YGC/FGC 频率。
      */
+    @Operation(summary = "场景10：GC压力（频繁GC）", description = "高速分配1MB对象不保留；排查：jstat -gcutil 1000 看 YGC/FGC 频率")
     @GetMapping("/gc-pressure")
     public ResponseEntity<String> gcPressure() {
         return startTask("gc-pressure", stopFlag -> {
@@ -257,6 +271,7 @@ public class IssueController {
      * 场景 11：日志狂写（磁盘 IO 打满 / 磁盘被写满）。
      * 每次写约 1KB 一行到 logs/flood.log，写满约 500MB 自动停，可随时 reset。
      */
+    @Operation(summary = "场景11：日志狂写（磁盘IO）", description = "狂写 logs/flood.log 封顶500MB；模拟磁盘被打满/日志洪水")
     @GetMapping("/log-flood")
     public ResponseEntity<String> logFlood() {
         return startTask("log-flood", stopFlag -> {
@@ -283,6 +298,7 @@ public class IssueController {
      * 停止所有可控故障场景（中断注册表里的线程并清空）。
      * 注意：OOM、死锁无法"恢复"，死锁线程会永久挂起（可重启进程）。
      */
+    @Operation(summary = "停止所有可控故障场景", description = "中断注册表中的故障线程；死锁/OOM 无法恢复需重启进程")
     @GetMapping("/reset")
     public ResponseEntity<String> reset() {
         StringBuilder sb = new StringBuilder();
