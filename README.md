@@ -48,6 +48,53 @@ curl http://localhost:8091/issue/reset
 
 ---
 
+## JVM 优化案例库（`/jvm/*` 端点）
+
+与上面的「故障触发」不同，这组案例聚焦 **配置不当导致的性能问题**，每个案例的
+生产故事 / 根因分析 / JVM 参数方案 / 代码层方案写在源码注释里：
+`src/main/java/com/lab/web/JvmTuningController.java`
+
+| # | 端点 | 案例 | 核心结论 |
+|---|------|------|---------|
+| 0 | `GET /jvm/info` | 当前 JVM 配置体检 | GC 器 / 堆配置 / 显式参数 / GC 次数，调优前先看 |
+| 1 | `GET /jvm/young-churn` | 新生代过小 → 频繁 YGC | 大 Eden + 低频 YGC 优于小 Eden + 高频 YGC；别乱设 `-Xmn` |
+| 2 | `GET /jvm/premature-promotion` | 过早晋升 / 大对象污染老年代 | 拆大对象优先于调参数；G1 下注意 `-XX:G1HeapRegionSize` |
+| 3 | `GET /jvm/system-gc-trap` | 依赖库里的隐形 `System.gc()` | `-XX:+DisableExplicitGC` 一键根治，但要配 `-XX:MaxDirectMemorySize` 兜底 |
+| — | `GET /jvm/stop` | 停止所有 JVM 演示 | — |
+
+### A/B 对比实验：同一个负载，不同 JVM 参数
+
+调优的最好学习方法就是做对照实验（观察工具：`jstat -gcutil <pid> 1000`）：
+
+```bash
+# 实验1：堆大小对比（触发 /jvm/young-churn 后对比 YGC 频率）
+java -Xms64m  -Xmx64m  -jar target/trouble-lab-1.0.0.jar --server.port=8092   # 小堆：YGC 疯狂
+java -Xms512m -Xmx512m -jar target/trouble-lab-1.0.0.jar --server.port=8093   # 正常：YGC 平稳
+
+# 实验2：显式 GC 对比（触发 /jvm/system-gc-trap）
+java -jar target/trouble-lab-1.0.0.jar --server.port=8094                        # FGC 每秒1次
+java -XX:+DisableExplicitGC -jar target/trouble-lab-1.0.0.jar --server.port=8095 # FGC 消失
+
+# 实验3：GC 日志（调优的眼睛，建议常开）
+java -Xlog:gc*:file=logs/gc.log:time,uptime -jar target/trouble-lab-1.0.0.jar
+```
+
+### 常用 JVM 参数速查（G1，JDK17+ 默认）
+
+| 参数 | 作用 | 经验值 |
+|------|------|--------|
+| `-Xms` = `-Xmx` | 消除堆伸缩抖动 | 生产必设且相等 |
+| `-XX:MaxGCPauseMillis` | G1 目标停顿 | 低延迟服务 50~100ms |
+| `-XX:G1HeapRegionSize` | region 大小，超一半即 Humongous | 大对象多的服务 8~16m |
+| `-XX:InitiatingHeapOccupancyPercent` | 触发并发标记的堆占用阈值 | 默认 45，老年代涨太快可调低 |
+| `-XX:MaxMetaspaceSize` | 元空间上限 | 必设，防类泄漏吃光内存 |
+| `-XX:MaxDirectMemorySize` | 堆外内存上限 | 配 DisableExplicitGC 时必设 |
+| `-XX:+HeapDumpOnOutOfMemoryError` | OOM 自动 dump | 生产必配 |
+| `-XX:+DisableExplicitGC` | 禁掉 System.gc() | 防依赖库隐形 FGC |
+| `-XX:+ZGC` | 超低延迟 GC（JDK17+） | P99 敏感服务，停顿 <1ms |
+
+---
+
 ## 排查工具箱（JDK 自带）
 
 先用 `jps -l` 找到进程 PID，下面统一用 `<pid>` 代指。
